@@ -53,6 +53,7 @@ interface Player {
   throws: "R" | "L";
   bats: "R" | "L";
   abilities: PitcherAbilities | BatterAbilities;
+  abilityCaps: Record<string, number>;
   fatigue: number;
   condition: number;
   traits: TraitId[];
@@ -76,7 +77,7 @@ interface BatterAbilities {
 }
 ```
 
-全能力と疲労は0〜100へ制限する。調子は`-2〜+2`の5段階を基本とする（暫定）。
+全能力と疲労は0〜100へ制限する。各能力はSeedから決定した`abilityCaps`も超えない。調子は`-2〜+2`の5段階を基本とする（暫定）。
 
 ## 6. キャリア
 

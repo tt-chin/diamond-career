@@ -5,12 +5,16 @@ const input={name:"テスト選手",seed:"fixed-seed",position:"IF",type:"BALANC
 const a=newGame(input);
 const b=newGame(input);
 assert.deepEqual(a.dice,b.dice,"同じSeedの最初のサイコロが一致する");
+assert.deepEqual(a.player.abilityCaps,b.player.abilityCaps,"同じSeedの能力上限が一致する");
 assert.equal(overall(a),overall(b),"同じSeedの初期能力が一致する");
+const otherSeed=newGame({...input,seed:"another-seed"});
+assert.notDeepEqual(a.player.abilityCaps,otherSeed.player.abilityCaps,"異なるSeedで能力上限が変化する");
 
 const before=overall(a);
 allocate(a,["contact","contact","power","defense"]);
 assert.ok(overall(a)>=before,"サイコロ配分後に総合力が低下しない");
 for(const value of Object.values(a.player.abilities))assert.ok(value>=0&&value<=100,"能力値は0〜100");
+for(const [key,value] of Object.entries(a.player.abilities))assert.ok(value<=a.player.abilityCaps[key],"能力値は個別上限を超えない");
 
 const batting={G:100,PA:400,AB:350,H:105,_2B:20,_3B:3,HR:12,RBI:55,BB:50,SB:8,DEF:4};
 assert.equal(avgText(batting),".300");

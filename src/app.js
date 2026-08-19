@@ -12,6 +12,14 @@ const ABILITIES = {P:[["stamina","体力"],["velocity","球速"],["control","制
 const TRAITS = {effort:"努力家",genius:"天才",iron:"鉄人",glass:"ガラスの身体",clutch:"大舞台",late:"晩成",popular:"人気者"};
 
 function hashSeed(str){let h=1779033703;for(const c of str){h=Math.imul(h^c.charCodeAt(0),3432918353);h=h<<13|h>>>19}return h>>>0}
+function abilityCap(seed,position,archetype,key,initial=0){
+  const value=hashSeed(`${seed}|${position}|${archetype}|${key}|cap`);
+  let cap=58+(value%25);
+  if(archetype==="READY")cap-=3;
+  if(archetype==="PROJECT")cap+=7;
+  if(archetype==="SPECIALIST"&&key===(position==="P"?"velocity":"power"))cap+=10;
+  return clamp(Math.max(initial+6,cap),45,95);
+}
 function rnd(s){s.rng=(s.rng+0x6D2B79F5)|0;let t=Math.imul(s.rng^s.rng>>>15,1|s.rng);t=t+Math.imul(t^t>>>7,61|t)^t;return((t^t>>>14)>>>0)/4294967296}
 function ri(s,a,b){return a+Math.floor(rnd(s)*(b-a+1))}
 function pick(s,a){return a[Math.floor(rnd(s)*a.length)]}
@@ -19,6 +27,16 @@ function clamp(v,a=0,b=100){return Math.max(a,Math.min(b,v))}
 function fmtMoney(v){return v>=10000?`${(v/10000).toFixed(v>=100000?0:1)}億円`:`${Math.round(v).toLocaleString()}万円`}
 function esc(s){return String(s).replace(/[&<>"']/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]))}
 function abilitiesOf(s){return s.player.position==="P"?ABILITIES.P:ABILITIES.B}
+function ensureAbilityCaps(s){
+  if(!s?.player)return s;
+  s.player.archetype ||= "BALANCED";
+  s.player.abilityCaps ||= {};
+  for(const [key] of abilitiesOf(s)){
+    s.player.abilityCaps[key] ||= abilityCap(s.seed,s.player.position,s.player.archetype,key,s.player.abilities[key]);
+  }
+  s.schemaVersion=Math.max(2,s.schemaVersion||1);
+  return s;
+}
 function overall(s){const a=abilitiesOf(s).map(([k])=>s.player.abilities[k]);return Math.round(a.reduce((x,y)=>x+y,0)/a.length)}
 function stageName(s){return {HIGH_SCHOOL:`高校${s.career.schoolYear}年`,RETRY:s.career.route||"再挑戦",PRO_JAPAN:"日本プロ",PRO_OVERSEAS:"海外",RETIRED:"引退"}[s.career.stage]||"選手作成"}
 function partName(p){return {SPRING:"春",SUMMER:"夏",AUTUMN:"秋",WINTER:"冬",CAMP:"キャンプ",SEASON:"シーズン",OFFSEASON:"オフ"}[p]||p}
@@ -26,19 +44,22 @@ function partName(p){return {SPRING:"春",SUMMER:"夏",AUTUMN:"秋",WINTER:"冬"
 function newGame(input){
   const seed=input.seed||Math.random().toString(36).slice(2,10); const rng=hashSeed(seed);
   const pos=input.position, isP=pos==="P"; const base=isP?{stamina:34,velocity:34,control:32,breaking:31}:{stamina:34,contact:33,power:31,speed:34,defense:33};
-  const s={schemaVersion:1,gameVersion:GAME_VERSION,seed,rng,turn:0,status:"ACTIVE",player:{name:input.name||NAMES[rng%NAMES.length],position:pos,bats:input.bats,throws:input.throws,abilities:base,fatigue:0,condition:0,traits:[]},career:{stage:"HIGH_SCHOOL",level:"BENCH",year:2026,age:15,schoolYear:1,part:"SPRING",team:"青葉学園",salary:0,proYears:0},seasons:[],international:[],history:[],dice:null,pending:null};
+  const s={schemaVersion:2,gameVersion:GAME_VERSION,seed,rng,turn:0,status:"ACTIVE",player:{name:input.name||NAMES[rng%NAMES.length],position:pos,archetype:input.type,bats:input.bats,throws:input.throws,abilities:base,abilityCaps:{},fatigue:0,condition:0,traits:[]},career:{stage:"HIGH_SCHOOL",level:"BENCH",year:2026,age:15,schoolYear:1,part:"SPRING",team:"青葉学園",salary:0,proYears:0},seasons:[],international:[],history:[],dice:null,pending:null};
   if(input.type==="READY") Object.keys(base).forEach(k=>base[k]+=2);
   if(input.type==="PROJECT") {Object.keys(base).forEach(k=>base[k]-=2);s.player.traits.push("late")}
   if(input.type==="SPECIALIST"){const key=isP?"velocity":"power";base[key]+=8;base.stamina-=3}
+  ensureAbilityCaps(s);
   log(s,"高校野球部へ入部",`${s.career.year}年、${s.player.name}の野球人生が始まった。`,true); prepareTurn(s); return s;
 }
 function log(s,title,text,important=false){s.history.push({turn:s.turn,year:s.career.year,age:s.career.age,title,text,important})}
 function rollDice(s){s.dice=Array.from({length:4},()=>ri(s,1,6));s.alloc={};}
 function prepareTurn(s){s.turn++; if(s.career.stage==="RETIRED")return finish(s); if(["SPRING","AUTUMN","CAMP"].includes(s.career.part)){rollDice(s);s.pending="ALLOCATE"}else{s.pending="CHOICE"}}
 function allocate(s,assign){
+  ensureAbilityCaps(s);
   const valid=abilitiesOf(s).map(x=>x[0]); if(!s.dice||assign.length!==s.dice.length||assign.some(k=>!valid.includes(k)))return;
-  assign.forEach((k,i)=>{const fatiguePenalty=s.player.fatigue>=80?0.65:1;const gain=Math.max(1,Math.round(s.dice[i]*0.55*fatiguePenalty));s.player.abilities[k]=clamp(s.player.abilities[k]+gain)});
-  s.player.fatigue=clamp(s.player.fatigue+ri(s,7,14)); log(s,"育成の成果",assign.map((k,i)=>`${labelFor(k)} +${Math.max(1,Math.round(s.dice[i]*.55*(s.player.fatigue>=80?.65:1)))}`).join("、")); s.dice=null;advance(s);
+  const changes=[];
+  assign.forEach((k,i)=>{const fatiguePenalty=s.player.fatigue>=80?0.65:1;const planned=Math.max(1,Math.round(s.dice[i]*0.55*fatiguePenalty));const before=s.player.abilities[k];s.player.abilities[k]=Math.min(s.player.abilityCaps[k],before+planned);changes.push(`${labelFor(k)} +${s.player.abilities[k]-before}`)});
+  s.player.fatigue=clamp(s.player.fatigue+ri(s,7,14)); log(s,"育成の成果",changes.join("、")); s.dice=null;advance(s);
 }
 function labelFor(k){return [...ABILITIES.P,...ABILITIES.B].find(x=>x[0]===k)?.[1]||k}
 function choices(s){
@@ -64,7 +85,7 @@ function highSchoolTournament(s,id){const bonus={steady:0,aggressive:ri(s,-8,10)
 function graduation(s,id){if(id!=="draft")return startRetry(s,id);draft(s)}
 function draft(s,fromRetry=false){const score=overall(s)+(s.scout||0)/10+ri(s,-10,10);if(score>=58){const rank=score>=75?"上位指名":score>=65?"本指名":"育成指名";const team=pick(s,JP_TEAMS);s.career.stage="PRO_JAPAN";s.career.team=team;s.career.level=rank==="育成指名"?"DEVELOPMENT":"FARM";s.career.salary=rank==="上位指名"?1600:rank==="本指名"?900:300;s.career.proYears=0;s.career.part="CAMP";log(s,"ドラフト会議",`${team}から${rank}を受け、プロ入りが決まった。`,true);prepareTurn(s);save(s);render()}else if(fromRetry){log(s,"ドラフト会議","この年も指名には届かなかった。",true);if(s.career.retryLeft<=0)return retire(s,"プロ入りがかなわず、競技生活を終えた");s.career.age++;s.career.year++;prepareTurn(s);save(s);render()}else{s.pending="ROUTE";log(s,"ドラフト会議","名前は呼ばれなかった。次の道から再挑戦する。",true);save(s);render()}}
 function startRetry(s,id){s.career.stage="RETRY";s.career.route=id==="university"?"大学":"社会人";s.career.retryLeft=id==="university"?4:3;s.career.schoolYear=undefined;s.career.part="SEASON";s.career.age++;s.career.year++;log(s,`${s.career.route}へ`,`${s.career.route}野球でプロを目指すことにした。`,true);prepareTurn(s);save(s);render()}
-function retryChoice(s,id){if(id==="rest")s.player.fatigue=clamp(s.player.fatigue-25);else{const keys=abilitiesOf(s).map(x=>x[0]);for(let i=0;i<2;i++){const k=pick(s,keys);s.player.abilities[k]=clamp(s.player.abilities[k]+ri(s,1,id==="show"?5:4))}}s.career.retryLeft--;log(s,`${s.career.route}での挑戦`,`成長を続け、再びスカウトの評価を受けた。`);if(overall(s)+ri(s,-10,10)>=55||s.career.retryLeft<=0)return draft(s,true);s.career.age++;s.career.year++;prepareTurn(s);save(s);render()}
+function retryChoice(s,id){ensureAbilityCaps(s);if(id==="rest")s.player.fatigue=clamp(s.player.fatigue-25);else{const keys=abilitiesOf(s).map(x=>x[0]);for(let i=0;i<2;i++){const k=pick(s,keys);s.player.abilities[k]=Math.min(s.player.abilityCaps[k],s.player.abilities[k]+ri(s,1,id==="show"?5:4))}}s.career.retryLeft--;log(s,`${s.career.route}での挑戦`,`成長を続け、再びスカウトの評価を受けた。`);if(overall(s)+ri(s,-10,10)>=55||s.career.retryLeft<=0)return draft(s,true);s.career.age++;s.career.year++;prepareTurn(s);save(s);render()}
 function playSeason(s,id){
   const o=overall(s),risk=id==="attack"?0.12:0.05; if(rnd(s)<risk*(s.player.fatigue/60+1)){s.player.fatigue=100;log(s,"故障離脱","シーズン中に故障し、長期離脱となった。",true)}
   const levelScore=o+ri(s,-10,10)+(id==="attack"?4:0);s.career.level=s.career.stage==="PRO_OVERSEAS"?(levelScore>=75?"MAJOR":"MINOR"):(levelScore>=58?"FIRST_TEAM":"FARM");const rec=generateStats(s,id);rec.salary=s.career.salary;s.seasons.push(rec);log(s,`${s.career.year}年シーズン`,rec.summary,true);s.player.fatigue=clamp(s.player.fatigue+ri(s,15,28));maybeAward(s,rec);s.career.part="OFFSEASON";s.pending="CHOICE";save(s);render()}
@@ -79,7 +100,7 @@ function advance(s){const c=s.career;if(c.stage==="HIGH_SCHOOL"){const order=["S
 function retire(s,reason){s.career.stage="RETIRED";s.status="COMPLETED";s.career.retiredReason=reason;log(s,"現役引退",reason,true);finish(s)}
 function finish(s){s.pending=null;save(s);render()}
 function save(s){try{const old=localStorage.getItem(SAVE_KEY);if(old)localStorage.setItem(BACKUP_KEY,old);localStorage.setItem(SAVE_KEY,JSON.stringify(s))}catch{}}
-function load(){try{return JSON.parse(localStorage.getItem(SAVE_KEY))}catch{return null}}
+function load(){try{const saved=JSON.parse(localStorage.getItem(SAVE_KEY));return saved?ensureAbilityCaps(saved):null}catch{return null}}
 function clearSave(){localStorage.removeItem(SAVE_KEY);localStorage.removeItem(BACKUP_KEY);state=null;render()}
 
 function avgText(st){return st.AB? (st.H/st.AB).toFixed(3).replace(/^0/,""):"-"}
@@ -94,7 +115,7 @@ let state=load();
 function render(){if(!$app)return;if(!state)return renderStart();if(state.status==="COMPLETED")return renderResult();renderGame()}
 function renderStart(){const has=!!load();$app.innerHTML=`<main class="app start"><div class="brand-ball"></div><h1>ダイヤの<span>軌跡</span></h1><p class="lead">高校入学からドラフト、プロ、海外挑戦、引退まで。サイコロが紡ぐ、あなただけの野球人生。</p><form id="start-form"><div class="field"><label for="name">選手名</label><input id="name" maxlength="12" placeholder="未入力なら自動生成"></div><div class="field"><label>守備区分</label><div class="seg four" data-seg="position"><button type="button" data-v="P" class="selected">投手</button><button type="button" data-v="C">捕手</button><button type="button" data-v="IF">内野手</button><button type="button" data-v="OF">外野手</button></div></div><div class="field"><label>選手タイプ</label><div class="seg" data-seg="type"><button type="button" data-v="BALANCED" class="selected">バランス型</button><button type="button" data-v="READY">即戦力型</button><button type="button" data-v="PROJECT">素材型</button><button type="button" data-v="SPECIALIST">一芸特化型</button></div></div><div class="field"><label>投打</label><div class="seg" data-seg="hand"><button type="button" data-v="R" class="selected">右投右打</button><button type="button" data-v="L">左投左打</button></div></div><div class="field"><label for="seed">Seed</label><input id="seed" value="${Math.random().toString(36).slice(2,10)}"></div><button class="primary">キャリア開始</button>${has?'<button class="secondary" type="button" id="continue">続きから</button>':""}</form><p class="subtle">v${GAME_VERSION}・進行はこの端末へ自動保存されます。</p></main>`;let vals={position:"P",type:"BALANCED",hand:"R"};document.querySelectorAll("[data-seg]").forEach(seg=>seg.onclick=e=>{const b=e.target.closest("button");if(!b)return;seg.querySelectorAll("button").forEach(x=>x.classList.remove("selected"));b.classList.add("selected");vals[seg.dataset.seg]=b.dataset.v});document.querySelector("#start-form").onsubmit=e=>{e.preventDefault();state=newGame({name:document.querySelector("#name").value.trim(),seed:document.querySelector("#seed").value.trim(),position:vals.position,type:vals.type,bats:vals.hand,throws:vals.hand});save(state);render()};document.querySelector("#continue")?.addEventListener("click",()=>{state=load();render()})}
 function renderGame(){const s=state;$app.innerHTML=`<main class="app"><header class="scoreboard"><div class="score-top"><div class="player-name">${esc(s.player.name)}</div><div class="team">${esc(s.career.team||stageName(s))}・${levelText(s.career.level)}</div><button class="gear" id="settings" aria-label="設定">⋯</button></div><div class="score-grid"><div class="score-cell"><b>${s.career.age}</b><span>年齢</span></div><div class="score-cell"><b>${s.career.year}</b><span>年度</span></div><div class="score-cell"><b>${overall(s)}</b><span>総合</span></div><div class="score-cell"><b>${s.career.salary?fmtMoney(s.career.salary):"—"}</b><span>年俸</span></div></div></header><section class="content"><div class="progress">${stageName(s)}・${partName(s.career.part)}・疲労 ${s.player.fatigue}</div>${abilityPanel(s)}${statsPanel(s)}<section class="panel"><h2>キャリアログ</h2><div class="log">${s.history.slice(-10).map(x=>`<div class="entry ${x.important?"important":""}"><b>${esc(x.title)}</b><p>${esc(x.text)}</p></div>`).join("")}</div></section></section><section class="action">${actionHtml(s)}</section></main>`;bindGame()}
-function abilityPanel(s){return`<details class="panel"><summary>能力・特性</summary><div class="detail-body">${abilitiesOf(s).map(([k,l])=>`<div class="ability"><span>${l}</span><div class="bar"><i style="width:${s.player.abilities[k]}%"></i></div><b>${s.player.abilities[k]}</b></div>`).join("")}<div class="tags">${s.player.traits.length?s.player.traits.map(t=>`<span class="tag">${TRAITS[t]}</span>`).join(""):'<span class="empty">特性なし</span>'}</div></div></details>`}
+function abilityPanel(s){ensureAbilityCaps(s);return`<details class="panel"><summary>能力・特性</summary><div class="detail-body">${abilitiesOf(s).map(([k,l])=>`<div class="ability"><span>${l}</span><div class="bar"><i style="width:${Math.round(s.player.abilities[k]/s.player.abilityCaps[k]*100)}%"></i></div><b>${s.player.abilities[k]}/${s.player.abilityCaps[k]}</b></div>`).join("")}<div class="tags">${s.player.traits.length?s.player.traits.map(t=>`<span class="tag">${TRAITS[t]}</span>`).join(""):'<span class="empty">特性なし</span>'}</div></div></details>`}
 function statsPanel(s){if(!s.seasons.length)return`<details class="panel"><summary>成績</summary><div class="detail-body empty">まだ公式成績はありません。</div></details>`;const p=s.player.position==="P";const head=p?["年","齢","球団","G","IP","W","L","SV","HLD","SO","BB","ERA","WHIP"]:["年","齢","球団","G","PA","AVG","OBP","SLG","OPS","H","HR","RBI","SB","DEF"];const rows=s.seasons.map(r=>{const x=p?r.pitching:r.batting;const v=p?[r.year,r.age,r.team,x.G,x.IP,x.W,x.L,x.SV,x.HLD,x.SO,x.BB,era(x),whip(x)]:[r.year,r.age,r.team,x.G,x.PA,avgText(x),obp(x),slg(x),ops(x),x.H,x.HR,x.RBI,x.SB,x.DEF];return`<tr>${v.map(y=>`<td>${esc(y)}</td>`).join("")}</tr>`}).join("");return`<details class="panel"><summary>成績</summary><div class="detail-body table-wrap"><table class="stats"><thead><tr>${head.map(x=>`<th>${x}</th>`).join("")}</tr></thead><tbody>${rows}</tbody></table></div></details>`}
 function leagueName(level){return {DEVELOPMENT:"NPB二軍",FARM:"NPB二軍",FIRST_TEAM:"NPB一軍",MINOR:"マイナー",MAJOR:"メジャー"}[level]||level}
 function sumStats(records,key){const out={};for(const r of records){const st=r[key];if(!st)continue;for(const [k,v] of Object.entries(st))if(typeof v==="number")out[k]=(out[k]||0)+v}return out}
@@ -106,12 +127,28 @@ function careerStatsPanel(s){
   return`<section class="panel"><h2>リーグ別通算成績</h2><div class="table-wrap"><table class="stats"><thead><tr>${head.map(x=>`<th>${x}</th>`).join("")}</tr></thead><tbody>${rows}</tbody></table></div>${intl}</section>`
 }
 function actionHtml(s){if(s.pending?.offers)return`<div class="action-title">契約オファーを選択</div>${s.pending.offers.map((o,i)=>`<button class="choice offer" data-i="${i}">${esc(o.team)}<small>${levelText(o.level)}開始・${fmtMoney(o.salary)}</small></button>`).join("")}`;if(s.pending==="ROUTE")return`<div class="action-title">次の進路</div><button class="choice route" data-id="university">大学で再挑戦<small>最大4年間</small></button><button class="choice route" data-id="corporate">社会人で再挑戦<small>最大3年間</small></button>`;if(s.pending==="ALLOCATE")return allocHtml(s);return`<div class="action-title">行動を選択</div>${choices(s).map(c=>`<button class="choice action-choice ${c.id==="retire"?"warn":""}" data-id="${c.id}">${c.label}<small>${c.hint}</small></button>`).join("")}`}
-function allocHtml(s){const dice=s.dice||[];return`<div class="action-title">サイコロを能力へ配分</div><div class="dice-row">${dice.map((d,i)=>`<div class="die" data-die="${i}">${d}</div>`).join("")}</div><div id="alloc-rows">${abilitiesOf(s).map(([k,l])=>`<div class="alloc-row"><span>${l}</span><b>${s.player.abilities[k]}</b><button data-ability="${k}">割当</button></div>`).join("")}</div><div class="subtle" id="alloc-note">サイコロを選び、割り当て先を押してください。</div><button class="primary" id="alloc-done" disabled>決定</button>`}
+function allocHtml(s){ensureAbilityCaps(s);const dice=s.dice||[];return`<div class="action-title">サイコロを能力へ配分</div><div class="dice-row">${dice.map((d,i)=>`<div class="die" data-die="${i}">${d}</div>`).join("")}</div><div id="alloc-rows">${abilitiesOf(s).map(([k,l])=>`<div class="alloc-row"><span>${l}</span><b>${s.player.abilities[k]}/${s.player.abilityCaps[k]}</b><button data-ability="${k}" ${s.player.abilities[k]>=s.player.abilityCaps[k]?"disabled":""}>割当</button></div>`).join("")}</div><div class="subtle" id="alloc-note">1個目を選択中です。割り当て先の能力を押してください。</div><button class="primary" id="alloc-done" disabled>決定</button>`}
 function bindGame(){document.querySelector("#settings").onclick=showSettings;document.querySelectorAll(".action-choice").forEach(b=>b.onclick=()=>choose(state,b.dataset.id));document.querySelectorAll(".route").forEach(b=>b.onclick=()=>startRetry(state,b.dataset.id));document.querySelectorAll(".offer").forEach(b=>b.onclick=()=>acceptOffer(state,Number(b.dataset.i)));if(state.pending==="ALLOCATE")bindAllocate()}
-function bindAllocate(){let selected=null,assign=Array(state.dice.length).fill(null);document.querySelectorAll(".die").forEach(d=>d.onclick=()=>{if(assign[d.dataset.die])return;selected=Number(d.dataset.die);document.querySelectorAll(".die").forEach(x=>x.style.outline="");d.style.outline="3px solid var(--yellow)"});document.querySelectorAll("[data-ability]").forEach(b=>b.onclick=()=>{if(selected===null)return;assign[selected]=b.dataset.ability;document.querySelector(`[data-die="${selected}"]`).classList.add("used");selected=null;document.querySelector("#alloc-note").textContent=`${assign.filter(Boolean).length}/4個を配分済み`;document.querySelector("#alloc-done").disabled=assign.some(x=>!x)});document.querySelector("#alloc-done").onclick=()=>allocate(state,assign)}
+function bindAllocate(){
+  let selected=0,assign=Array(state.dice.length).fill(null);
+  const selectDie=index=>{selected=index;document.querySelectorAll(".die").forEach(x=>x.style.outline="");if(index!==null)document.querySelector(`[data-die="${index}"]`).style.outline="3px solid var(--yellow)"};
+  document.querySelectorAll(".die").forEach(d=>d.onclick=()=>{const index=Number(d.dataset.die);if(!assign[index])selectDie(index)});
+  selectDie(0);
+  document.querySelectorAll("[data-ability]").forEach(b=>b.onclick=()=>{
+    if(selected===null||b.disabled)return;
+    assign[selected]=b.dataset.ability;
+    document.querySelector(`[data-die="${selected}"]`).classList.add("used");
+    const next=assign.findIndex(x=>!x);
+    selectDie(next<0?null:next);
+    const done=assign.filter(Boolean).length;
+    document.querySelector("#alloc-note").textContent=next<0?"4個すべて配分済みです。":`${done}/4個を配分済み。次のサイコロを自動選択しました。`;
+    document.querySelector("#alloc-done").disabled=next>=0;
+  });
+  document.querySelector("#alloc-done").onclick=()=>allocate(state,assign)
+}
 function showSettings(){$app.insertAdjacentHTML("beforeend",`<div class="modal-backdrop" id="modal"><div class="modal"><h2>設定</h2><p class="subtle">Seed: ${esc(state.seed)} / v${GAME_VERSION}</p><button class="secondary" id="close-modal">閉じる</button><button class="secondary danger" id="reset-game">セーブを削除して最初から</button></div></div>`);document.querySelector("#close-modal").onclick=()=>document.querySelector("#modal").remove();document.querySelector("#reset-game").onclick=()=>{if(confirm("現在のキャリアを削除しますか？"))clearSave()}}
 function renderResult(){const s=state,years=s.seasons.length;let title=years>=15&&overall(s)>=75?"球史に残る名選手":years>=10?"長く愛されたプロ野球選手":years?"挑戦を続けた野球人":"夢を追った球児";const maxSalary=Math.max(0,...s.seasons.map(r=>r.salary||0));$app.innerHTML=`<main class="app result"><section class="result-hero"><div class="eyebrow">CAREER COMPLETE</div><h1>${esc(s.player.name)}</h1><p>${title}</p><p>${esc(s.career.retiredReason||"")}</p></section>${careerStatsPanel(s)}${statsPanel(s)}<section class="panel"><h2>キャリア</h2><p>現役期間 ${years}年<br>最高年俸 ${fmtMoney(maxSalary)}<br>最終所属 ${esc(s.career.team||"—")}</p><div class="tags">${s.player.traits.map(t=>`<span class="tag">${TRAITS[t]}</span>`).join("")}</div></section><section class="panel"><h2>主な出来事</h2><div class="log">${s.history.filter(x=>x.important).map(x=>`<div class="entry important"><b>${x.year} ${esc(x.title)}</b><p>${esc(x.text)}</p></div>`).join("")}</div></section><div class="result-actions"><button class="secondary" id="same-seed">同じSeed</button><button class="primary" id="new-game">新しい選手</button></div><p class="subtle">Seed: ${esc(s.seed)} / v${GAME_VERSION}</p></main>`;document.querySelector("#new-game").onclick=clearSave;document.querySelector("#same-seed").onclick=()=>{const seed=s.seed;clearSave();setTimeout(()=>{const el=document.querySelector("#seed");if(el)el.value=seed},0)}}
 
 if($app)render();
 
-export {newGame, allocate, choose, choices, startRetry, acceptOffer, overall, avgText, obp, slg, ops, era, whip, generateStats};
+export {newGame, allocate, choose, choices, startRetry, acceptOffer, overall, abilityCap, ensureAbilityCaps, avgText, obp, slg, ops, era, whip, generateStats};
