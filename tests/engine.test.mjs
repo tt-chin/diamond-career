@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import {newGame, allocate, choose, choices, startRetry, acceptOffer, overall, avgText, obp, slg, ops, era, whip} from "../src/app.js";
+import {newGame, allocate, allocationGain, choose, choices, startRetry, acceptOffer, overall, avgText, obp, slg, ops, era, whip} from "../src/app.js";
 
 const input={name:"テスト選手",seed:"fixed-seed",position:"IF",type:"BALANCED",bats:"R",throws:"R"};
 const a=newGame(input);
@@ -11,6 +11,7 @@ const otherSeed=newGame({...input,seed:"another-seed"});
 assert.notDeepEqual(a.player.abilityCaps,otherSeed.player.abilityCaps,"異なるSeedで能力上限が変化する");
 
 const before=overall(a);
+assert.equal(allocationGain(a,6),3,"通常疲労時の配分増加値を計算できる");
 allocate(a,["contact","contact","power","defense"]);
 assert.ok(overall(a)>=before,"サイコロ配分後に総合力が低下しない");
 for(const value of Object.values(a.player.abilities))assert.ok(value>=0&&value<=100,"能力値は0〜100");
