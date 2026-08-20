@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import {newGame, allocate, allocationGain, choose, choices, startRetry, acceptOffer, overall, avgText, obp, slg, ops, era, whip} from "../src/app.js";
+import {newGame, allocate, trainingCost, applyTrainingPoints, choose, choices, startRetry, acceptOffer, overall, avgText, obp, slg, ops, era, whip} from "../src/app.js";
 
 const input={name:"テスト選手",seed:"fixed-seed",position:"IF",type:"BALANCED",bats:"R",throws:"R"};
 const a=newGame(input);
@@ -11,11 +11,21 @@ const otherSeed=newGame({...input,seed:"another-seed"});
 assert.notDeepEqual(a.player.abilityCaps,otherSeed.player.abilityCaps,"異なるSeedで能力上限が変化する");
 
 const before=overall(a);
-assert.equal(allocationGain(a,6),3,"通常疲労時の配分増加値を計算できる");
 allocate(a,["contact","contact","power","defense"]);
 assert.ok(overall(a)>=before,"サイコロ配分後に総合力が低下しない");
 for(const value of Object.values(a.player.abilities))assert.ok(value>=0&&value<=100,"能力値は0〜100");
-for(const [key,value] of Object.entries(a.player.abilities))assert.ok(value<=a.player.abilityCaps[key],"能力値は個別上限を超えない");
+assert.equal(trainingCost(59,60),1,"初期上限未満は1点で成長する");
+assert.equal(trainingCost(60,60),3,"初期上限到達後は最低3点必要");
+assert.equal(trainingCost(85,60),5,"80台は5点必要");
+assert.equal(trainingCost(92,60),10,"90〜94は10点必要");
+assert.equal(trainingCost(98,60),20,"95以上は20点必要");
+const trainee={abilities:{power:60},abilityCaps:{power:60},trainingPoints:{power:0}};
+applyTrainingPoints(trainee,"power",2);
+assert.deepEqual([trainee.abilities.power,trainee.trainingPoints.power],[60,2],"不足点を繰り越す");
+applyTrainingPoints(trainee,"power",4);
+assert.deepEqual([trainee.abilities.power,trainee.trainingPoints.power],[62,0],"繰越点を次回の成長に使う");
+trainee.abilities.power=99;trainee.trainingPoints.power=19;applyTrainingPoints(trainee,"power",6);
+assert.deepEqual([trainee.abilities.power,trainee.trainingPoints.power],[100,0],"能力最大値100で停止する");
 
 const batting={G:100,PA:400,AB:350,H:105,_2B:20,_3B:3,HR:12,RBI:55,BB:50,SB:8,DEF:4};
 assert.equal(avgText(batting),".300");

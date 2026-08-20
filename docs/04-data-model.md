@@ -54,6 +54,7 @@ interface Player {
   bats: "R" | "L";
   abilities: PitcherAbilities | BatterAbilities;
   abilityCaps: Record<string, number>;
+  trainingPoints: Record<string, number>;
   fatigue: number;
   condition: number;
   traits: TraitId[];
@@ -77,7 +78,7 @@ interface BatterAbilities {
 }
 ```
 
-全能力と疲労は0〜100へ制限する。各能力はSeedから決定した`abilityCaps`も超えない。調子は`-2〜+2`の5段階を基本とする（暫定）。
+全能力と疲労は0〜100へ制限する。`abilityCaps`はSeedから決定する初期上限であり、育成効率が切り替わる境界として使用する。初期上限以降も能力は100まで成長でき、未使用の育成点は能力別の`trainingPoints`へ繰り越す。調子は`-2〜+2`の5段階を基本とする（暫定）。
 
 ## 6. キャリア
 

@@ -31,10 +31,12 @@ function ensureAbilityCaps(s){
   if(!s?.player)return s;
   s.player.archetype ||= "BALANCED";
   s.player.abilityCaps ||= {};
+  s.player.trainingPoints ||= {};
   for(const [key] of abilitiesOf(s)){
     s.player.abilityCaps[key] ||= abilityCap(s.seed,s.player.position,s.player.archetype,key,s.player.abilities[key]);
+    s.player.trainingPoints[key] ||= 0;
   }
-  s.schemaVersion=Math.max(2,s.schemaVersion||1);
+  s.schemaVersion=Math.max(3,s.schemaVersion||1);
   return s;
 }
 function overall(s){const a=abilitiesOf(s).map(([k])=>s.player.abilities[k]);return Math.round(a.reduce((x,y)=>x+y,0)/a.length)}
@@ -44,7 +46,7 @@ function partName(p){return {SPRING:"春",SUMMER:"夏",AUTUMN:"秋",WINTER:"冬"
 function newGame(input){
   const seed=input.seed||Math.random().toString(36).slice(2,10); const rng=hashSeed(seed);
   const pos=input.position, isP=pos==="P"; const base=isP?{stamina:34,velocity:34,control:32,breaking:31}:{stamina:34,contact:33,power:31,speed:34,defense:33};
-  const s={schemaVersion:2,gameVersion:GAME_VERSION,seed,rng,turn:0,status:"ACTIVE",player:{name:input.name||NAMES[rng%NAMES.length],position:pos,archetype:input.type,bats:input.bats,throws:input.throws,abilities:base,abilityCaps:{},fatigue:0,condition:0,traits:[]},career:{stage:"HIGH_SCHOOL",level:"BENCH",year:2026,age:15,schoolYear:1,part:"SPRING",team:"青葉学園",salary:0,proYears:0},seasons:[],international:[],history:[],dice:null,pending:null};
+  const s={schemaVersion:3,gameVersion:GAME_VERSION,seed,rng,turn:0,status:"ACTIVE",player:{name:input.name||NAMES[rng%NAMES.length],position:pos,archetype:input.type,bats:input.bats,throws:input.throws,abilities:base,abilityCaps:{},trainingPoints:{},fatigue:0,condition:0,traits:[]},career:{stage:"HIGH_SCHOOL",level:"BENCH",year:2026,age:15,schoolYear:1,part:"SPRING",team:"青葉学園",salary:0,proYears:0},seasons:[],international:[],history:[],dice:null,pending:null};
   if(input.type==="READY") Object.keys(base).forEach(k=>base[k]+=2);
   if(input.type==="PROJECT") {Object.keys(base).forEach(k=>base[k]-=2);s.player.traits.push("late")}
   if(input.type==="SPECIALIST"){const key=isP?"velocity":"power";base[key]+=8;base.stamina-=3}
@@ -54,12 +56,17 @@ function newGame(input){
 function log(s,title,text,important=false){s.history.push({turn:s.turn,year:s.career.year,age:s.career.age,title,text,important})}
 function rollDice(s){s.dice=Array.from({length:4},()=>ri(s,1,6));s.alloc={};}
 function prepareTurn(s){s.turn++; if(s.career.stage==="RETIRED")return finish(s); if(["SPRING","AUTUMN","CAMP"].includes(s.career.part)){rollDice(s);s.pending="ALLOCATE"}else{s.pending="CHOICE"}}
-function allocationGain(s,die){return Math.max(1,Math.round(die*0.55*(s.player.fatigue>=80?0.65:1)))}
+function trainingCost(value,initialCap){if(value<initialCap)return 1;if(value<80)return 3;if(value<90)return 5;if(value<95)return 10;if(value<100)return 20;return Infinity}
+function applyTrainingPoints(player,key,points){
+  const initialCap=player.abilityCaps[key];let value=player.abilities[key],bank=(player.trainingPoints[key]||0)+points;
+  while(value<100){const cost=trainingCost(value,initialCap);if(bank<cost)break;bank-=cost;value++}
+  player.abilities[key]=value;player.trainingPoints[key]=value>=100?0:bank;return value
+}
 function allocate(s,assign){
   ensureAbilityCaps(s);
   const valid=abilitiesOf(s).map(x=>x[0]); if(!s.dice||assign.length!==s.dice.length||assign.some(k=>!valid.includes(k)))return;
   const changes=[];
-  assign.forEach((k,i)=>{const before=s.player.abilities[k];s.player.abilities[k]=Math.min(s.player.abilityCaps[k],before+allocationGain(s,s.dice[i]));changes.push(`${labelFor(k)} +${s.player.abilities[k]-before}`)});
+  assign.forEach((k,i)=>{const before=s.player.abilities[k];applyTrainingPoints(s.player,k,s.dice[i]);const gain=s.player.abilities[k]-before;const progress=s.player.abilities[k]<100&&s.player.trainingPoints[k]?`（蓄積 ${s.player.trainingPoints[k]}/${trainingCost(s.player.abilities[k],s.player.abilityCaps[k])}）`:"";changes.push(`${labelFor(k)} +${gain}${progress}`)});
   s.player.fatigue=clamp(s.player.fatigue+ri(s,7,14)); log(s,"育成の成果",changes.join("、")); s.dice=null;advance(s);
 }
 function labelFor(k){return [...ABILITIES.P,...ABILITIES.B].find(x=>x[0]===k)?.[1]||k}
@@ -116,7 +123,7 @@ let state=load();
 function render(){if(!$app)return;if(!state)return renderStart();if(state.status==="COMPLETED")return renderResult();renderGame()}
 function renderStart(){const has=!!load();$app.innerHTML=`<main class="app start"><div class="brand-ball"></div><h1>ダイヤの<span>軌跡</span></h1><p class="lead">高校入学からドラフト、プロ、海外挑戦、引退まで。サイコロが紡ぐ、あなただけの野球人生。</p><form id="start-form"><div class="field"><label for="name">選手名</label><input id="name" maxlength="12" placeholder="未入力なら自動生成"></div><div class="field"><label>守備区分</label><div class="seg four" data-seg="position"><button type="button" data-v="P" class="selected">投手</button><button type="button" data-v="C">捕手</button><button type="button" data-v="IF">内野手</button><button type="button" data-v="OF">外野手</button></div></div><div class="field"><label>選手タイプ</label><div class="seg" data-seg="type"><button type="button" data-v="BALANCED" class="selected">バランス型</button><button type="button" data-v="READY">即戦力型</button><button type="button" data-v="PROJECT">素材型</button><button type="button" data-v="SPECIALIST">一芸特化型</button></div></div><div class="field"><label>投打</label><div class="seg" data-seg="hand"><button type="button" data-v="R" class="selected">右投右打</button><button type="button" data-v="L">左投左打</button></div></div><div class="field"><label for="seed">Seed</label><input id="seed" value="${Math.random().toString(36).slice(2,10)}"></div><button class="primary">キャリア開始</button>${has?'<button class="secondary" type="button" id="continue">続きから</button>':""}</form><p class="subtle">v${GAME_VERSION}・進行はこの端末へ自動保存されます。</p></main>`;let vals={position:"P",type:"BALANCED",hand:"R"};document.querySelectorAll("[data-seg]").forEach(seg=>seg.onclick=e=>{const b=e.target.closest("button");if(!b)return;seg.querySelectorAll("button").forEach(x=>x.classList.remove("selected"));b.classList.add("selected");vals[seg.dataset.seg]=b.dataset.v});document.querySelector("#start-form").onsubmit=e=>{e.preventDefault();state=newGame({name:document.querySelector("#name").value.trim(),seed:document.querySelector("#seed").value.trim(),position:vals.position,type:vals.type,bats:vals.hand,throws:vals.hand});save(state);render()};document.querySelector("#continue")?.addEventListener("click",()=>{state=load();render()})}
 function renderGame(){const s=state;$app.innerHTML=`<main class="app"><header class="scoreboard"><div class="score-top"><div class="player-name">${esc(s.player.name)}</div><div class="team">${esc(s.career.team||stageName(s))}・${levelText(s.career.level)}</div><button class="gear" id="settings" aria-label="設定">⋯</button></div><div class="score-grid"><div class="score-cell"><b>${s.career.age}</b><span>年齢</span></div><div class="score-cell"><b>${s.career.year}</b><span>年度</span></div><div class="score-cell"><b>${overall(s)}</b><span>総合</span></div><div class="score-cell"><b>${s.career.salary?fmtMoney(s.career.salary):"—"}</b><span>年俸</span></div></div></header><section class="content"><div class="progress">${stageName(s)}・${partName(s.career.part)}・疲労 ${s.player.fatigue}</div>${abilityPanel(s)}${statsPanel(s)}<section class="panel"><h2>キャリアログ</h2><div class="log career-log" id="career-log">${s.history.map(x=>`<div class="entry ${x.important?"important":""}"><b>${esc(x.title)}</b><p>${esc(x.text)}</p></div>`).join("")}</div></section></section><section class="action">${actionHtml(s)}</section></main>`;bindGame()}
-function abilityPanel(s){ensureAbilityCaps(s);return`<details class="panel"><summary>能力・特性</summary><div class="detail-body">${abilitiesOf(s).map(([k,l])=>`<div class="ability"><span>${l}</span><div class="bar"><i style="width:${Math.round(s.player.abilities[k]/s.player.abilityCaps[k]*100)}%"></i></div><b>${s.player.abilities[k]}/${s.player.abilityCaps[k]}</b></div>`).join("")}<div class="tags">${s.player.traits.length?s.player.traits.map(t=>`<span class="tag">${TRAITS[t]}</span>`).join(""):'<span class="empty">特性なし</span>'}</div></div></details>`}
+function abilityPanel(s){ensureAbilityCaps(s);return`<details class="panel"><summary>能力・特性</summary><div class="detail-body">${abilitiesOf(s).map(([k,l])=>`<div class="ability"><span>${l}</span><div class="bar capped-bar" style="--cap:${s.player.abilityCaps[k]}%"><i style="width:${s.player.abilities[k]}%"></i></div><b>${s.player.abilities[k]}/100</b><small>初期上限 ${s.player.abilityCaps[k]}</small></div>`).join("")}<div class="tags">${s.player.traits.length?s.player.traits.map(t=>`<span class="tag">${TRAITS[t]}</span>`).join(""):'<span class="empty">特性なし</span>'}</div></div></details>`}
 function statsPanel(s){if(!s.seasons.length)return`<details class="panel"><summary>成績</summary><div class="detail-body empty">まだ公式成績はありません。</div></details>`;const p=s.player.position==="P";const head=p?["年","齢","球団","G","IP","W","L","SV","HLD","SO","BB","ERA","WHIP"]:["年","齢","球団","G","PA","AVG","OBP","SLG","OPS","H","HR","RBI","SB","DEF"];const rows=s.seasons.map(r=>{const x=p?r.pitching:r.batting;const v=p?[r.year,r.age,r.team,x.G,x.IP,x.W,x.L,x.SV,x.HLD,x.SO,x.BB,era(x),whip(x)]:[r.year,r.age,r.team,x.G,x.PA,avgText(x),obp(x),slg(x),ops(x),x.H,x.HR,x.RBI,x.SB,x.DEF];return`<tr>${v.map(y=>`<td>${esc(y)}</td>`).join("")}</tr>`}).join("");return`<details class="panel"><summary>成績</summary><div class="detail-body table-wrap"><table class="stats"><thead><tr>${head.map(x=>`<th>${x}</th>`).join("")}</tr></thead><tbody>${rows}</tbody></table></div></details>`}
 function leagueName(level){return {DEVELOPMENT:"NPB二軍",FARM:"NPB二軍",FIRST_TEAM:"NPB一軍",MINOR:"マイナー",MAJOR:"メジャー"}[level]||level}
 function sumStats(records,key){const out={};for(const r of records){const st=r[key];if(!st)continue;for(const [k,v] of Object.entries(st))if(typeof v==="number")out[k]=(out[k]||0)+v}return out}
@@ -128,11 +135,12 @@ function careerStatsPanel(s){
   return`<section class="panel"><h2>リーグ別通算成績</h2><div class="table-wrap"><table class="stats"><thead><tr>${head.map(x=>`<th>${x}</th>`).join("")}</tr></thead><tbody>${rows}</tbody></table></div>${intl}</section>`
 }
 function actionHtml(s){if(s.pending?.offers)return`<div class="action-title">契約オファーを選択</div>${s.pending.offers.map((o,i)=>`<button class="choice offer" data-i="${i}">${esc(o.team)}<small>${levelText(o.level)}開始・${fmtMoney(o.salary)}</small></button>`).join("")}`;if(s.pending==="ROUTE")return`<div class="action-title">次の進路</div><button class="choice route" data-id="university">大学で再挑戦<small>最大4年間</small></button><button class="choice route" data-id="corporate">社会人で再挑戦<small>最大3年間</small></button>`;if(s.pending==="ALLOCATE")return allocHtml(s);return`<div class="action-title">行動を選択</div>${choices(s).map(c=>`<button class="choice action-choice ${c.id==="retire"?"warn":""}" data-id="${c.id}">${c.label}<small>${c.hint}</small></button>`).join("")}`}
-function allocHtml(s){ensureAbilityCaps(s);const dice=s.dice||[];return`<div class="action-title">サイコロを能力へ配分</div><div class="dice-row">${dice.map((d,i)=>`<div class="die" data-die="${i}">${d}</div>`).join("")}</div><div id="alloc-rows">${abilitiesOf(s).map(([k,l])=>`<div class="alloc-row"><span>${l}</span><div class="bar"><i id="alloc-bar-${k}" style="width:${Math.round(s.player.abilities[k]/s.player.abilityCaps[k]*100)}%"></i></div><b id="alloc-value-${k}">${s.player.abilities[k]}/${s.player.abilityCaps[k]}</b><button data-ability="${k}" ${s.player.abilities[k]>=s.player.abilityCaps[k]?"disabled":""}>割当</button></div>`).join("")}</div><div class="subtle" id="alloc-note">1個目を選択中です。割り当て先の能力を押してください。</div><button class="primary" id="alloc-done" disabled>決定</button>`}
+function progressText(player,key){if(player.abilities[key]>=100)return"最大値";const cost=trainingCost(player.abilities[key],player.abilityCaps[key]);return`次の1点まで ${player.trainingPoints[key]||0}/${cost}（初期上限 ${player.abilityCaps[key]}）`}
+function allocHtml(s){ensureAbilityCaps(s);const dice=s.dice||[];return`<div class="action-title">サイコロを能力へ配分</div><div class="dice-row">${dice.map((d,i)=>`<div class="die" data-die="${i}">${d}</div>`).join("")}</div><div id="alloc-rows">${abilitiesOf(s).map(([k,l])=>`<div class="alloc-row"><span>${l}</span><div class="bar capped-bar" style="--cap:${s.player.abilityCaps[k]}%"><i id="alloc-bar-${k}" style="width:${s.player.abilities[k]}%"></i></div><b id="alloc-value-${k}">${s.player.abilities[k]}/100</b><button data-ability="${k}" ${s.player.abilities[k]>=100?"disabled":""}>割当</button><small id="alloc-progress-${k}">${progressText(s.player,k)}</small></div>`).join("")}</div><div class="subtle" id="alloc-note">1個目を選択中です。割り当て先の能力を押してください。</div><button class="primary" id="alloc-done" disabled>決定</button>`}
 function bindGame(){document.querySelector("#settings").onclick=showSettings;document.querySelectorAll(".action-choice").forEach(b=>b.onclick=()=>choose(state,b.dataset.id));document.querySelectorAll(".route").forEach(b=>b.onclick=()=>startRetry(state,b.dataset.id));document.querySelectorAll(".offer").forEach(b=>b.onclick=()=>acceptOffer(state,Number(b.dataset.i)));if(state.pending==="ALLOCATE")bindAllocate();const careerLog=document.querySelector("#career-log");if(careerLog)careerLog.scrollTop=careerLog.scrollHeight}
 function bindAllocate(){
   let selected=0,assign=Array(state.dice.length).fill(null);
-  const preview={...state.player.abilities};
+  const preview={abilities:{...state.player.abilities},abilityCaps:{...state.player.abilityCaps},trainingPoints:{...state.player.trainingPoints}};
   const selectDie=index=>{selected=index;document.querySelectorAll(".die").forEach(x=>x.style.outline="");if(index!==null)document.querySelector(`[data-die="${index}"]`).style.outline="3px solid var(--yellow)"};
   document.querySelectorAll(".die").forEach(d=>d.onclick=()=>{const index=Number(d.dataset.die);if(!assign[index])selectDie(index)});
   selectDie(0);
@@ -140,9 +148,10 @@ function bindAllocate(){
     if(selected===null||b.disabled)return;
     const key=b.dataset.ability;
     assign[selected]=key;
-    preview[key]=Math.min(state.player.abilityCaps[key],preview[key]+allocationGain(state,state.dice[selected]));
-    document.querySelector(`#alloc-value-${key}`).textContent=`${preview[key]}/${state.player.abilityCaps[key]}`;
-    document.querySelector(`#alloc-bar-${key}`).style.width=`${Math.round(preview[key]/state.player.abilityCaps[key]*100)}%`;
+    applyTrainingPoints(preview,key,state.dice[selected]);
+    document.querySelector(`#alloc-value-${key}`).textContent=`${preview.abilities[key]}/100`;
+    document.querySelector(`#alloc-bar-${key}`).style.width=`${preview.abilities[key]}%`;
+    document.querySelector(`#alloc-progress-${key}`).textContent=progressText(preview,key);
     document.querySelector(`[data-die="${selected}"]`).classList.add("used");
     const next=assign.findIndex(x=>!x);
     selectDie(next<0?null:next);
@@ -157,4 +166,4 @@ function renderResult(){const s=state,years=s.seasons.length;let title=years>=15
 
 if($app)render();
 
-export {newGame, allocate, allocationGain, choose, choices, startRetry, acceptOffer, overall, abilityCap, ensureAbilityCaps, avgText, obp, slg, ops, era, whip, generateStats};
+export {newGame, allocate, trainingCost, applyTrainingPoints, choose, choices, startRetry, acceptOffer, overall, abilityCap, ensureAbilityCaps, avgText, obp, slg, ops, era, whip, generateStats};
